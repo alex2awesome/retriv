@@ -14,7 +14,7 @@ The Sparse Retriever provides several options to tailor its functioning to you p
 Default parameter values are shown.
 
 ```python
-# Note: the SparseRetriever as an alias called SearchEngine, if you prefer
+# Note: the SparseRetriever has an alias called SearchEngine, if you prefer
 from retriv import SparseRetriever
 
 sr = SparseRetriever(
@@ -156,7 +156,7 @@ You can inspect the current configuration by printing `sr.hyperparams`.
 ```python
 sr.autotune(
   queries=[{ "q_id": "q_1", "text": "...", ... }],  # Train queries
-  qrels=[{ "q_1": { "doc_1": 1, ... }, ... }],      # Train qrels
+  qrels={ "q_1": { "doc_1": 1, ... }, ... },      # Train qrels
   metric="ndcg",  # Default value, metric to maximize
   n_trials=100,   # Default value, number of trials
   cutoff=100,     # Default value, number of results
