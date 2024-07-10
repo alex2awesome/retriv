@@ -20,7 +20,7 @@ setuptools.setup(
         "tqdm",
         "optuna",
         "krovetzstemmer",
-        "pystemmer==2.0.1",
+        "pystemmer",
         "unidecode",
         "scikit-learn",
         "ranx",
