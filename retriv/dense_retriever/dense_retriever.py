@@ -243,6 +243,7 @@ class DenseRetriever(BaseRetriever):
     def index(
         self,
         collection: Iterable,
+        embeddings_path: str = None,
         callback: callable = None,
         show_progress: bool = True,
         batch_size: int = 1,
@@ -259,14 +260,20 @@ class DenseRetriever(BaseRetriever):
         else:
             use_gpu = False
 
-        super().index(
-            collection=collection,
+        self.save_collection(collection, callback)
+        self.initialize_doc_index()
+        self.initialize_id_mapping()
+        self.doc_count = len(self.id_mapping)
+        self.index_aux(
+            embeddings_path=embeddings_path,
+            use_gpu=use_gpu,
+            batch_size=batch_size,
             callback=callback,
             show_progress=show_progress,
-            batch_size=batch_size,
-            use_gpu=use_gpu
         )
         self.id_mapping_reverse = self.make_inverse_index(self.id_mapping)
+        self.save()
+        return self
 
     def index_file(
         self,
