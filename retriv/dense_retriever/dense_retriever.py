@@ -15,49 +15,130 @@ from .ann_searcher import ANN_Searcher
 from .encoder import Encoder
 
 
+
+def make_inverse_index_url(id_mapping):
+    """
+    Constructs an inverse index for the id_mapping, where the keys are urls + their cleaned versions
+    and the values are the ids.
+
+    """
+    def clean_url(to_get_url):
+        return urljoin(to_get_url, urlparse(to_get_url).path)
+
+    inverse_index = {}
+    for id, url in id_mapping.items():
+        inverse_index[url] = id
+        cleaned_url = clean_url(url)
+        if cleaned_url not in inverse_index:
+            inverse_index[cleaned_url] = id
+        if cleaned_url[-1] == '/':
+            cleaned_url = cleaned_url[:-1]
+            if cleaned_url not in inverse_index:
+                inverse_index[cleaned_url] = id
+
+    return inverse_index
+
+
+def get_search_params(subset_ids, index_info):
+    """
+    Helper function to configure and return the search parameters for a FAISS index based on provided index information.
+
+    This function dynamically selects the appropriate FAISS search parameters class
+    based on the type of index key indicated in `index_info`. It also parses additional
+    parameters specified as a string and sets them appropriately.
+
+    Parameters:
+    subset_ids (list[int]): A list of subset IDs for which search parameters are to be configured.
+    index_info (dict): Dictionary containing the index key and additional parameter string.
+                       Expected keys are 'index_key' and 'index_param'.
+
+    Returns:
+    object: An instance of a FAISS search parameters class configured with the provided selector
+            and additional parameters.
+    """
+    # Extract the index key from the index information dictionary.
+    index_key = index_info["index_key"]
+
+    # Choose the appropriate search parameters class based on the index key.
+    params_class = (
+        faiss.SearchParametersIVF if "IVF" in index_key else
+        faiss.SearchParametersPQ if "PQ" in index_key else
+        faiss.SearchParametersHNSW if 'HNSW' in index_key else
+        faiss.SearchParameters
+    )
+    # Retrieve additional index parameters from the index information dictionary.
+    index_kwargs = index_info['index_param']
+    # Initialize an empty dictionary to store additional parameters.
+    add_params = {}
+    # Split the index parameters string by commas and iterate over each parameter.
+    for p in index_kwargs.split(','):
+        # Split each parameter into key and value pairs on the '=' character.
+        k, v = p.split('=')
+        # If the value is a digit, convert it from string to integer.
+        if v.isdigit():
+            v = int(v)
+        add_params[k] = v
+
+    # Create a selector for a batch of IDs using the provided subset_ids.
+    sel = faiss.IDSelectorBatch(subset_ids)
+    return params_class(sel=sel, **add_params)
+
+
 class DenseRetriever(BaseRetriever):
     def __init__(
-        self,
-        index_name: str = "new-index",
-        model: str = "sentence-transformers/all-MiniLM-L6-v2",
-        normalize: bool = True,
-        max_length: int = 128,
-        use_ann: bool = True,
+            self,
+            index_name: str = "new-index",
+            model: str = "sentence-transformers/all-MiniLM-L6-v2",
+            normalize: bool = True,
+            max_length: int = None,
+            embedding_dim: int = None,
+            use_ann: bool = True,
+            make_inverse_index: Union[None, Callable] = None,
+            device: str = "cpu",
+            *args,
+            **kwargs
     ):
-        """The Dense Retriever performs [semantic search](https://en.wikipedia.org/wiki/Semantic_search), i.e., it compares vector representations of queries and documents to compute the relevance scores of the latter.
+        """Initialize MyDenseRetriever with the option to create an inverse index.
 
         Args:
             index_name (str, optional): [retriv](https://github.com/AmenRa/retriv) will use `index_name` as the identifier of your index. Defaults to "new-index".
-
             model (str, optional): defines the encoder model to encode queries and documents into vectors. You can use an [HuggingFace's Transformers](https://huggingface.co/models) pre-trained model by providing its ID or load a local model by providing its path.  In the case of local models, the path must point to the directory containing the data saved with the [`PreTrainedModel.save_pretrained`](https://huggingface.co/docs/transformers/v4.26.1/en/main_classes/model#transformers.PreTrainedModel.save_pretrained) method. Note that the representations are computed with `mean pooling` over the `last_hidden_state`. Defaults to "sentence-transformers/all-MiniLM-L6-v2".
-
             normalize (bool, optional): whether to L2 normalize the vector representations. Defaults to True.
-
             max_length (int, optional): texts longer than `max_length` will be automatically truncated. Choose this parameter based on how the employed model was trained or is generally used. Defaults to 128.
-
             use_ann (bool, optional): whether to use approximate nearest neighbors search. Set it to `False` to use nearest neighbors search without approximation. If you have less than 20k documents in your collection, you probably want to disable approximation. Defaults to True.
+            make_inverse_index: a callable that takes a dictionary and returns its inverse. Defaults to None.
         """
-
         self.index_name = index_name
         self.model = model
         self.normalize = normalize
-        self.max_length = max_length
         self.use_ann = use_ann
+        self.device = device
 
-        self.encoder = Encoder(
+        self.encoder = MyEncoder(
             index_name=index_name,
             model=model,
             normalize=normalize,
             max_length=max_length,
+            hidden_size=embedding_dim,
+            device=device,
         )
 
-        self.ann_searcher = ANN_Searcher(index_name=index_name)
+        if max_length is None:
+            self.max_length = self.encoder.max_length
+        else:
+            self.max_length = max_length
 
+        self.ann_searcher = ANN_Searcher(index_name=index_name)
         self.id_mapping = None
         self.doc_count = None
         self.doc_index = None
-
         self.embeddings = None
+        self.id_mapping_reverse = None
+        if make_inverse_index is None:
+            self.make_inverse_index = lambda x: {v: k for k, v in x.items()}
+        else:
+            self.make_inverse_index = kwargs['make_inverse_index']
+
 
     def save(self):
         """Save the state of the retriever to be able to restore it later."""
@@ -77,16 +158,24 @@ class DenseRetriever(BaseRetriever):
         np.savez_compressed(dr_state_path(self.index_name), state=state)
 
     @staticmethod
-    def load(index_name: str = "new-index"):
-        """Load a retriever and its index.
+    @staticmethod
+    def load(
+            index_name: str = "new-index",
+            make_inverse_index: Union[None, Callable] = None,
+            *args,
+            **kwargs
+    ):
+        """Static method to load a previously saved index and its associated retriever.
 
         Args:
-            index_name (str, optional): Name of the index. Defaults to "new-index".
+            index_name (str, optional): Name of the index to load. Defaults to "new-index".
+            make_inverse_index (Union[None, Callable], optional): Function to generate an inverse index.
+            *args: Variable length argument list.
+            **kwargs: Arbitrary keyword arguments.
 
         Returns:
-            DenseRetriever: Dense Retriever.
+            MyDenseRetriever: The loaded dense retriever object.
         """
-
         state = np.load(dr_state_path(index_name), allow_pickle=True)["state"][()]
         dr = DenseRetriever(**state["init_args"])
         dr.initialize_doc_index()
@@ -96,7 +185,17 @@ class DenseRetriever(BaseRetriever):
             dr.load_embeddings()
         if dr.use_ann:
             dr.ann_searcher = ANN_Searcher.load(index_name)
+
+        if 'id_mapping_reverse' not in state:
+            if make_inverse_index is None:
+                dr.id_mapping_reverse = {v: k for k, v in dr.id_mapping.items()}
+            else:
+                dr.id_mapping_reverse = make_inverse_index(dr.id_mapping)
+        else:
+            dr.id_mapping_reverse = state['id_mapping_reverse']
+
         return dr
+
 
     def load_embeddings(self):
         """Internal usage."""
@@ -143,44 +242,30 @@ class DenseRetriever(BaseRetriever):
     def index(
         self,
         collection: Iterable,
-        embeddings_path: str = None,
-        use_gpu: bool = False,
-        batch_size: int = 512,
         callback: callable = None,
         show_progress: bool = True,
+        batch_size: int = 1,
     ):
-        """Index a given collection of documents.
+        """Indexes the provided collection and generates an inverse index mapping.
 
         Args:
-            collection (Iterable): collection of documents to index.
-
-            embeddings_path (str, optional): in case you want to load pre-computed embeddings, you can provide the path to a `.npy` file. Embeddings must be in the same order as the documents in the collection file. Defaults to None.
-
-            use_gpu (bool, optional): whether to use the GPU for document encoding. Defaults to False.
-
-            batch_size (int, optional): how many documents to encode at once. Regulate it if you ran into memory usage issues or want to maximize throughput. Defaults to 512.
-
-            callback (callable, optional): callback to apply before indexing the documents to modify them on the fly if needed. Defaults to None.
-
-            show_progress (bool, optional): whether to show a progress bar for the indexing process. Defaults to True.
-
-        Returns:
-            DenseRetriever: Dense Retriever
+            collection (Iterable): The collection of documents to index.
+            callback (callable, optional): A callback function for progress updates. Defaults to None.
+            show_progress (bool, optional): Flag to show progress of indexing. Defaults to True.
         """
+        if self.device == 'cuda':
+            use_gpu = True
+        else:
+            use_gpu = False
 
-        self.save_collection(collection, callback)
-        self.initialize_doc_index()
-        self.initialize_id_mapping()
-        self.doc_count = len(self.id_mapping)
-        self.index_aux(
-            embeddings_path=embeddings_path,
-            use_gpu=use_gpu,
-            batch_size=batch_size,
+        super().index(
+            collection=collection,
             callback=callback,
             show_progress=show_progress,
+            batch_size=batch_size,
+            use_gpu=use_gpu
         )
-        self.save()
-        return self
+        self.id_mapping_reverse = self.make_inverse_index(self.id_mapping)
 
     def index_file(
         self,
@@ -221,35 +306,51 @@ class DenseRetriever(BaseRetriever):
         )
 
     def search(
-        self,
-        query: str,
-        return_docs: bool = True,
-        cutoff: int = 100,
-    ) -> List:
-        """Standard search functionality.
+            self,
+            query: str,
+            include_id_list: List[str]=None,
+            return_docs: bool = True,
+            cutoff: int = 100,
+            verbose: bool = False,
+    ):
+        """Searches the indexed collection using the given query.
 
         Args:
-            query (str): what to search for.
-
-            return_docs (bool, optional): whether to return the texts of the documents. Defaults to True.
-
-            cutoff (int, optional): number of results to return. Defaults to 100.
+            query (str): The query string to search for.
+            include_id_list (List[str], optional): List of ids to include in the search. Defaults to None.
+            return_docs (bool, optional): Whether to return full documents or just ids and scores. Defaults to True.
+            cutoff (int, optional): The number of results to return. Defaults to 100.
+            verbose (bool, optional): If set to True, outputs additional log messages. Defaults to False.
 
         Returns:
-            List: results.
+            Either a list of documents or a dictionary of ids and their corresponding scores, based on return_docs.
         """
-
         encoded_query = self.encoder(query)
+        encoded_query = encoded_query.reshape(1, len(encoded_query))
 
         if self.use_ann:
-            doc_ids, scores = self.ann_searcher.search(encoded_query, cutoff)
+            if include_id_list is not None:
+                internal_subset_ids = []
+                for reverse_id in include_id_list:
+                    if reverse_id in self.id_mapping_reverse:
+                        internal_subset_ids.append(self.id_mapping_reverse[reverse_id])
+                    else:
+                        if verbose:
+                            logger.warning(f'Warning: {reverse_id} not in id_mapping')
+                search_params = get_search_params(internal_subset_ids, self.ann_searcher.faiss_index_infos)
+            else:
+                search_params = None
+            scores, doc_ids = self.ann_searcher.faiss_index.search(encoded_query, cutoff, params=search_params)
+            doc_ids, scores = doc_ids[0], scores[0]
+            to_keep = list(filter(lambda x: x[0] != -1, zip(doc_ids, scores)))
+            if len(to_keep) > 0:
+                doc_ids, scores = zip(*to_keep)
+            else:
+                doc_ids, scores = [], []
         else:
-            if self.embeddings is None:
-                self.load_embeddings()
-            doc_ids, scores = compute_scores(encoded_query, self.embeddings, cutoff)
+            raise NotImplementedError('use ANN....')
 
         doc_ids = self.map_internal_ids_to_original_ids(doc_ids)
-
         return (
             self.prepare_results(doc_ids, scores)
             if return_docs
