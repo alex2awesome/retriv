@@ -1,6 +1,7 @@
 import os
 import shutil
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Union, Callable
+import faiss
 
 import numpy as np
 import orjson
@@ -114,7 +115,7 @@ class DenseRetriever(BaseRetriever):
         self.use_ann = use_ann
         self.device = device
 
-        self.encoder = MyEncoder(
+        self.encoder = Encoder(
             index_name=index_name,
             model=model,
             normalize=normalize,
