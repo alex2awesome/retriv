@@ -14,7 +14,7 @@ from ..base_retriever import BaseRetriever
 from ..paths import docs_path, dr_state_path, embeddings_folder_path
 from .ann_searcher import ANN_Searcher
 from .encoder import Encoder
-
+from urllib.parse import urlparse, urljoin
 
 
 def make_inverse_index_url(id_mapping):
