@@ -5,6 +5,7 @@ import faiss
 
 import numpy as np
 import orjson
+import torch.cuda
 from numba import njit, prange
 from numba.typed import List as TypedList
 from oneliner_utils import create_path
@@ -15,7 +16,9 @@ from ..paths import docs_path, dr_state_path, embeddings_folder_path
 from .ann_searcher import ANN_Searcher
 from .encoder import Encoder
 from urllib.parse import urlparse, urljoin
+import logging
 
+logger = logging.getLogger(__name__)
 
 def make_inverse_index_url(id_mapping):
     """
@@ -95,7 +98,8 @@ class DenseRetriever(BaseRetriever):
             embedding_dim: int = None,
             use_ann: bool = True,
             make_inverse_index: Union[None, Callable] = None,
-            device: str = "cpu",
+            device: str = "cuda" if torch.cuda.is_available() else "cpu",
+            no_load_encoder: bool = False,
             *args,
             **kwargs
     ):
@@ -108,6 +112,7 @@ class DenseRetriever(BaseRetriever):
             max_length (int, optional): texts longer than `max_length` will be automatically truncated. Choose this parameter based on how the employed model was trained or is generally used. Defaults to 128.
             use_ann (bool, optional): whether to use approximate nearest neighbors search. Set it to `False` to use nearest neighbors search without approximation. If you have less than 20k documents in your collection, you probably want to disable approximation. Defaults to True.
             make_inverse_index: a callable that takes a dictionary and returns its inverse. Defaults to None.
+            no_load_encoder: load the index without loading the encoder (we must then pass in embeddings to `query` functions.
         """
         self.index_name = index_name
         self.model = model
@@ -115,14 +120,17 @@ class DenseRetriever(BaseRetriever):
         self.use_ann = use_ann
         self.device = device
 
-        self.encoder = Encoder(
-            index_name=index_name,
-            model=model,
-            normalize=normalize,
-            max_length=max_length,
-            hidden_size=embedding_dim,
-            device=device,
-        )
+        if no_load_encoder:
+            self.encoder = None
+        else:
+            self.encoder = Encoder(
+                index_name=index_name,
+                model=model,
+                normalize=normalize,
+                max_length=max_length,
+                hidden_size=embedding_dim,
+                device=device,
+            )
 
         if max_length is None:
             self.max_length = self.encoder.max_length
@@ -163,6 +171,7 @@ class DenseRetriever(BaseRetriever):
     def load(
             index_name: str = "new-index",
             make_inverse_index: Union[None, Callable] = None,
+            skip_encoder_loading: bool = False,
             *args,
             **kwargs
     ):
@@ -171,6 +180,8 @@ class DenseRetriever(BaseRetriever):
         Args:
             index_name (str, optional): Name of the index to load. Defaults to "new-index".
             make_inverse_index (Union[None, Callable], optional): Function to generate an inverse index.
+            skip_encoder_loading (bool, optional): Whether or not to load the encoder
+                (if we don't, we need to pass in embeddings instead of a query.)
             *args: Variable length argument list.
             **kwargs: Arbitrary keyword arguments.
 
@@ -178,7 +189,10 @@ class DenseRetriever(BaseRetriever):
             MyDenseRetriever: The loaded dense retriever object.
         """
         state = np.load(dr_state_path(index_name), allow_pickle=True)["state"][()]
-        dr = DenseRetriever(**state["init_args"])
+        dr = DenseRetriever(
+            **state["init_args"],
+            no_load_encoder=skip_encoder_loading
+        )
         dr.initialize_doc_index()
         dr.id_mapping = state["id_mapping"]
         dr.doc_count = state["doc_count"]
@@ -315,7 +329,8 @@ class DenseRetriever(BaseRetriever):
 
     def search(
             self,
-            query: str,
+            query: str = None,
+            encoded_query = None,
             include_id_list: List[str]=None,
             return_docs: bool = True,
             cutoff: int = 100,
@@ -325,6 +340,7 @@ class DenseRetriever(BaseRetriever):
 
         Args:
             query (str): The query string to search for.
+            encoded_query (torch.Tensor, None): A query embedding (if done by a separate process).
             include_id_list (List[str], optional): List of ids to include in the search. Defaults to None.
             return_docs (bool, optional): Whether to return full documents or just ids and scores. Defaults to True.
             cutoff (int, optional): The number of results to return. Defaults to 100.
@@ -333,7 +349,9 @@ class DenseRetriever(BaseRetriever):
         Returns:
             Either a list of documents or a dictionary of ids and their corresponding scores, based on return_docs.
         """
-        encoded_query = self.encoder(query)
+        if query is not None:
+            encoded_query = self.encoder(query)
+
         encoded_query = encoded_query.reshape(1, len(encoded_query))
 
         if self.use_ann:
