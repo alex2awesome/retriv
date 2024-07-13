@@ -77,7 +77,7 @@ class DenseRetriever(BaseRetriever):
         np.savez_compressed(dr_state_path(self.index_name), state=state)
 
     @staticmethod
-    def load(index_name: str = "new-index"):
+    def load(index_name: str = "new-index", transformers_cache_dir=None):
         """Load a retriever and its index.
 
         Args:
@@ -88,7 +88,7 @@ class DenseRetriever(BaseRetriever):
         """
 
         state = np.load(dr_state_path(index_name), allow_pickle=True)["state"][()]
-        dr = DenseRetriever(**state["init_args"])
+        dr = DenseRetriever(**state["init_args"], transformers_cache_dir=transformers_cache_dir)
         dr.initialize_doc_index()
         dr.id_mapping = state["id_mapping"]
         dr.doc_count = state["doc_count"]
