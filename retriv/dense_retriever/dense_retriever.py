@@ -96,6 +96,7 @@ class DenseRetriever(BaseRetriever):
             use_ann: bool = True,
             make_inverse_index: Union[None, Callable] = None,
             device: str = "cpu",
+            transformers_cache_dir=None,
             *args,
             **kwargs
     ):
@@ -122,6 +123,7 @@ class DenseRetriever(BaseRetriever):
             max_length=max_length,
             hidden_size=embedding_dim,
             device=device,
+            transformers_cache_dir=transformers_cache_dir
         )
 
         if max_length is None:
