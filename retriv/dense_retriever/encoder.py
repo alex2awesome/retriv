@@ -81,6 +81,7 @@ class Encoder:
             device: str = "cpu",
             hidden_size: int = None,
             pooling_method: str = None,
+            transformers_cache_dir: str = None,
     ):
 
         logging.info(f"Initializing MyEncoder with model: {model}")
@@ -89,9 +90,9 @@ class Encoder:
 
         self.index_name = index_name
         self.model = model
-        self.tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True)
-        self.encoder = AutoModel.from_pretrained(model, trust_remote_code=True).to(device).eval()
-        config = AutoConfig.from_pretrained(model, trust_remote_code=True)
+        self.tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True, cache_dir=transformers_cache_dir)
+        self.encoder = AutoModel.from_pretrained(model, trust_remote_code=True, cache_dir=transformers_cache_dir).to(device).eval()
+        config = AutoConfig.from_pretrained(model, trust_remote_code=True, cache_dir=transformers_cache_dir)
 
         # Set the hidden size based on the model configuration if not provided.
         if hasattr(config, 'hidden_size') and hidden_size is None:

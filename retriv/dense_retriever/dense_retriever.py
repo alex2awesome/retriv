@@ -100,6 +100,7 @@ class DenseRetriever(BaseRetriever):
             make_inverse_index: Union[None, Callable] = None,
             device: str = "cuda" if torch.cuda.is_available() else "cpu",
             no_load_encoder: bool = False,
+            transformers_cache_dir=None,
             *args,
             **kwargs
     ):
@@ -130,6 +131,8 @@ class DenseRetriever(BaseRetriever):
                 max_length=max_length,
                 hidden_size=embedding_dim,
                 device=device,
+                transformers_cache_dir=transformers_cache_dir
+
             )
 
         if max_length is None:
@@ -167,11 +170,11 @@ class DenseRetriever(BaseRetriever):
         np.savez_compressed(dr_state_path(self.index_name), state=state)
 
     @staticmethod
-    @staticmethod
     def load(
             index_name: str = "new-index",
             make_inverse_index: Union[None, Callable] = None,
             skip_encoder_loading: bool = False,
+            transformers_cache_dir: str = None,
             *args,
             **kwargs
     ):
@@ -186,12 +189,13 @@ class DenseRetriever(BaseRetriever):
             **kwargs: Arbitrary keyword arguments.
 
         Returns:
-            MyDenseRetriever: The loaded dense retriever object.
+            DenseRetriever: The loaded dense retriever object.
         """
         state = np.load(dr_state_path(index_name), allow_pickle=True)["state"][()]
         dr = DenseRetriever(
             **state["init_args"],
-            no_load_encoder=skip_encoder_loading
+            no_load_encoder=skip_encoder_loading,
+            transformers_cache_dir=transformers_cache_dir,
         )
         dr.initialize_doc_index()
         dr.id_mapping = state["id_mapping"]
