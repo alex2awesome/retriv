@@ -161,7 +161,6 @@ class DenseRetriever(BaseRetriever):
         np.savez_compressed(dr_state_path(self.index_name), state=state)
 
     @staticmethod
-    @staticmethod
     def load(
             index_name: str = "new-index",
             make_inverse_index: Union[None, Callable] = None,
