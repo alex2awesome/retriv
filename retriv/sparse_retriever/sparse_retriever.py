@@ -38,6 +38,7 @@ class SparseRetriever(BaseRetriever):
         do_acronyms_normalization: bool = True,
         do_punctuation_removal: bool = True,
         hyperparams: dict = None,
+        make_inverse_index: Union[None, Callable] = None,
     ):
         """The Sparse Retriever is a traditional searcher based on lexical matching. It supports BM25, the retrieval model used by major search engines libraries, such as Lucene and Elasticsearch. retriv also implements the classic relevance model TF-IDF for educational purposes.
 
@@ -121,6 +122,13 @@ class SparseRetriever(BaseRetriever):
 
         self.hyperparams = dict(b=0.75, k1=1.2) if hyperparams is None else hyperparams
 
+        self.id_mapping_reverse = None
+        if make_inverse_index is None:
+            self.make_inverse_index = lambda x: {v: k for k, v in x.items()}
+        else:
+            self.make_inverse_index = kwargs['make_inverse_index']
+
+
     def save(self) -> None:
         """Save the state of the retriever to be able to restore it later."""
 
@@ -138,7 +146,10 @@ class SparseRetriever(BaseRetriever):
         np.savez_compressed(sr_state_path(self.index_name), state=state)
 
     @staticmethod
-    def load(index_name: str = "new-index"):
+    def load(
+        index_name: str = "new-index",
+        make_inverse_index: Union[None, Callable] = None,
+    ):
         """Load a retriever and its index.
 
         Args:
@@ -159,6 +170,15 @@ class SparseRetriever(BaseRetriever):
         se.doc_lens = state["doc_lens"]
         se.relative_doc_lens = state["relative_doc_lens"]
         se.hyperparams = state["hyperparams"]
+
+
+        if 'id_mapping_reverse' not in state:
+            if make_inverse_index is None:
+                dr.id_mapping_reverse = {v: k for k, v in dr.id_mapping.items()}
+            else:
+                dr.id_mapping_reverse = make_inverse_index(dr.id_mapping)
+        else:
+            dr.id_mapping_reverse = state['id_mapping_reverse']
 
         state = {
             "init_args": se.init_args,
@@ -222,6 +242,7 @@ class SparseRetriever(BaseRetriever):
         self.initialize_id_mapping()
         self.doc_count = len(self.id_mapping)
         self.index_aux(show_progress)
+        self.id_mapping_reverse = self.make_inverse_index(self.id_mapping)
         self.save()
         return self
 
@@ -257,7 +278,13 @@ class SparseRetriever(BaseRetriever):
         """Internal usage."""
         return TypedList([self.inverted_index[t]["doc_ids"] for t in query_terms])
 
-    def search(self, query: str, return_docs: bool = True, cutoff: int = 100) -> List:
+    def search(
+        self,
+        query: str, 
+        include_id_list: List[str]=None,
+        return_docs: bool = True, 
+        cutoff: int = 100,
+    ) -> List:
         """Standard search functionality.
 
         Args:
@@ -281,6 +308,16 @@ class SparseRetriever(BaseRetriever):
         doc_ids = self.get_doc_ids(query_terms)
         term_doc_freqs = self.get_term_doc_freqs(query_terms)
 
+        internal_subset_ids = []
+        if include_id_list is not None:
+            for reverse_id in include_id_list:
+                if reverse_id in self.id_mapping_reverse:
+                    internal_subset_ids.append(self.id_mapping_reverse[reverse_id])
+                else:
+                    if verbose:
+                        logger.warning(f'Warning: {reverse_id} not in id_mapping')
+
+
         if self.model == "bm25":
             unique_doc_ids, scores = bm25(
                 term_doc_freqs=term_doc_freqs,
@@ -288,6 +325,7 @@ class SparseRetriever(BaseRetriever):
                 relative_doc_lens=self.relative_doc_lens,
                 doc_count=self.doc_count,
                 cutoff=cutoff,
+                subset_doc_ids=internal_subset_ids if len(internal_subset_ids) > 0 else None,
                 **self.hyperparams,
             )
         elif self.model == "tf-idf":
@@ -296,6 +334,7 @@ class SparseRetriever(BaseRetriever):
                 doc_ids=doc_ids,
                 doc_lens=self.doc_lens,
                 cutoff=cutoff,
+                subset_doc_ids=internal_subset_ids if len(internal_subset_ids) > 0 else None,
             )
         else:
             raise NotImplementedError()
@@ -307,7 +346,11 @@ class SparseRetriever(BaseRetriever):
 
         return self.prepare_results(unique_doc_ids, scores)
 
-    def msearch(self, queries: List[Dict[str, str]], cutoff: int = 100) -> Dict:
+    def msearch(
+        self,
+        queries: List[Dict[str, str]],
+        cutoff: int = 100
+    ) -> Dict:
         """Compute results for multiple queries at once.
 
         Args:
