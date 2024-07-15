@@ -7,6 +7,7 @@ import orjson
 from numba.typed import List as TypedList
 from oneliner_utils import create_path, read_jsonl
 from tqdm import tqdm
+from typing import Dict, Iterable, List, Union, Callable
 
 from ..autotune import tune_bm25
 from ..base_retriever import BaseRetriever
