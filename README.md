@@ -23,6 +23,23 @@
   </a>
 </p>
 
+## This fork: 
+
+Differs from the original `retriv` package in the following ways:
+* Is updated to handle some more recent embedding models (e.g. [`Salesforce/SFR-Embedding-2_R`](https://huggingface.co/Salesforce/SFR-Embedding-2_R))
+* Allows you to pass in a subset of doc_ids to filter your search
+* Some other minor bug fixes.
+
+## Installing the fork:
+
+If you don't have an existing `retriv` installation, just do this:
+
+`pip install git+https://github.com/alex2awesome/retriv.git`
+
+Otherwise, do this:
+
+`pip install git+https://github.com/alex2awesome/retriv.git --force-reinstall --no-deps`
+
 ## 🔥 News
 - [August 23, 2023] `retriv` 0.2.2 is out!  
 This release adds _experimental_ support for multi-field documents and filters.
@@ -84,10 +101,7 @@ Finally, it can automatically balance the importance of lexical and semantic rel
 python>=3.8
 ```
 
-## 💾 Installation
-```bash
-pip install retriv
-```
+* Note from Alex: I've found that `retriv` works best with `python3.9`, due primarily to package dependencies and `torch` updates. However, I have gotten it installed with other python versions, but it takes some `conda` and `pip` mixtures.
 
 ## 💡 Minimal Working Example
 
