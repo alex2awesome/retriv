@@ -175,11 +175,11 @@ class SparseRetriever(BaseRetriever):
 
         if 'id_mapping_reverse' not in state:
             if make_inverse_index is None:
-                dr.id_mapping_reverse = {v: k for k, v in dr.id_mapping.items()}
+                se.id_mapping_reverse = {v: k for k, v in se.id_mapping.items()}
             else:
-                dr.id_mapping_reverse = make_inverse_index(dr.id_mapping)
+                se.id_mapping_reverse = make_inverse_index(se.id_mapping)
         else:
-            dr.id_mapping_reverse = state['id_mapping_reverse']
+            se.id_mapping_reverse = state['id_mapping_reverse']
 
         state = {
             "init_args": se.init_args,
