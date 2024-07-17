@@ -285,6 +285,7 @@ class SparseRetriever(BaseRetriever):
         include_id_list: List[str]=None,
         return_docs: bool = True, 
         cutoff: int = 100,
+        verbose: bool = False,
     ) -> List:
         """Standard search functionality.
 
