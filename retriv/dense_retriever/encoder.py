@@ -93,7 +93,12 @@ class Encoder:
 
         self.model = model
         self.tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True, cache_dir=transformers_cache_dir)
-        self.encoder = AutoModel.from_pretrained(model, trust_remote_code=True, cache_dir=transformers_cache_dir).to(device).eval()
+        self.encoder = AutoModel.from_pretrained(
+            model,
+            trust_remote_code=True, 
+            cache_dir=transformers_cache_dir,
+            device_map=device
+        ).eval()
         config = AutoConfig.from_pretrained(model, trust_remote_code=True, cache_dir=transformers_cache_dir)
 
         # Set the hidden size based on the model configuration if not provided.
