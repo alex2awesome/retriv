@@ -84,11 +84,13 @@ class Encoder:
             transformers_cache_dir: str = None,
     ):
 
-        logging.info(f"Initializing MyEncoder with model: {model}")
-        ind_path = index_path(index_name)
-        logging.info(f"Collections Path: {ind_path}")
+        if index_name is not None:
+            # this is if we want to initialize an index without an encoder.
+            logging.info(f"Initializing MyEncoder with model: {model}")
+            ind_path = index_path(index_name)
+            logging.info(f"Collections Path: {ind_path}")
+            self.index_name = index_name
 
-        self.index_name = index_name
         self.model = model
         self.tokenizer = AutoTokenizer.from_pretrained(model, trust_remote_code=True, cache_dir=transformers_cache_dir)
         self.encoder = AutoModel.from_pretrained(model, trust_remote_code=True, cache_dir=transformers_cache_dir).to(device).eval()
