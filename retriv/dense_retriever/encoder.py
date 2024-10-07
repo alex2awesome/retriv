@@ -232,14 +232,20 @@ class Encoder:
 
     def encode_collection(
         self,
-        path: str,
+        path: str = None,
+        collection = None,
         batch_size: int = 512,
         callback: callable = None,
         show_progress: bool = True,
     ):
+            """
+                Helper function to embed a collection.
+                Collection must be a list of dictionaries with {"text": ""}.
+            """
         n_docs = count_lines(path)
-        collection = read_jsonl(path, callback=callback, generator=True)
-
+        assert (collection is not None) and (path is not None), "Must pass in either `path` or `collection` to this function."
+        if collection is None:
+                collection = read_jsonl(path, callback=callback, generator=True)
         reservoir = np.empty((1_000_000, self.embedding_dim), dtype=np.float32)
         reservoir_n = 0
         offset = 0
