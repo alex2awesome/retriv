@@ -238,14 +238,14 @@ class Encoder:
         callback: callable = None,
         show_progress: bool = True,
     ):
-            """
-                Helper function to embed a collection.
-                Collection must be a list of dictionaries with {"text": ""}.
-            """
+        """Helper function to embed a collection.
+
+        Collection must be a list of dictionaries with {"text": ""}.
+        """
         n_docs = count_lines(path)
-        assert (collection is not None) and (path is not None), "Must pass in either `path` or `collection` to this function."
+        assert (collection is not None) or (path is not None), "Must pass in either `path` or `collection` to this function."
         if collection is None:
-                collection = read_jsonl(path, callback=callback, generator=True)
+            collection = read_jsonl(path, callback=callback, generator=True)
         reservoir = np.empty((1_000_000, self.embedding_dim), dtype=np.float32)
         reservoir_n = 0
         offset = 0
