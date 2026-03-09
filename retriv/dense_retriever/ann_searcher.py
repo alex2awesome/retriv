@@ -24,15 +24,21 @@ class ANN_Searcher:
         self.faiss_index_infos = None
 
     def build(self, use_gpu=False):
+        # Cap current_memory_available at 256GB to avoid autofaiss heuristic
+        # failures on high-RAM machines (e.g. 3TB nodes).
+        ram = get_ram()
+        ram_gb = float(ram.replace("GB", "").replace("TB", "e3"))
+        capped_ram = f"{min(ram_gb, 256):.0f}GB"
+
         index, index_infos = build_index(
             embeddings=str(embeddings_folder_path(self.index_name)),
             index_path=str(faiss_index_path(self.index_name)),
             index_infos_path=str(faiss_index_infos_path(self.index_name)),
             save_on_disk=True,
             metric_type="ip",
-            # max_index_memory_usage="32GB",
-            current_memory_available=get_ram(),
-            max_index_query_time_ms=10,
+            max_index_memory_usage="50GB",
+            current_memory_available=capped_ram,
+            max_index_query_time_ms=100,
             min_nearest_neighbors_to_retrieve=20,
             index_key=None,
             index_param=None,
