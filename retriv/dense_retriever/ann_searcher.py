@@ -9,12 +9,9 @@ from oneliner_utils import read_json
 from ..paths import embeddings_folder_path, faiss_index_infos_path, faiss_index_path
 
 
-def get_ram():
-    size_bytes = psutil.virtual_memory().total
-    i = int(math.floor(math.log(size_bytes, 1024)))
-    p = math.pow(1024, i)
-    s = round(size_bytes / p, 2)
-    return f"{s}GB"
+def get_ram_gb() -> float:
+    """Return total system RAM in GB."""
+    return psutil.virtual_memory().total / (1024 ** 3)
 
 
 class ANN_Searcher:
@@ -24,10 +21,8 @@ class ANN_Searcher:
         self.faiss_index_infos = None
 
     def build(self, use_gpu=False):
-        # Cap current_memory_available at 256GB to avoid autofaiss heuristic
-        # failures on high-RAM machines (e.g. 3TB nodes).
-        ram = get_ram()
-        ram_gb = float(ram.replace("GB", "").replace("TB", "e3"))
+        # Cap at 256GB to avoid autofaiss heuristic failures on high-RAM machines.
+        ram_gb = get_ram_gb()
         capped_ram = f"{min(ram_gb, 256):.0f}GB"
 
         index, index_infos = build_index(
