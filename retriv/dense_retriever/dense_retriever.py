@@ -76,8 +76,11 @@ def get_search_params(subset_ids, index_info):
     add_params = {}
     # Split the index parameters string by commas and iterate over each parameter.
     for p in index_kwargs.split(','):
+        p = p.strip()
+        if not p or '=' not in p:
+            continue
         # Split each parameter into key and value pairs on the '=' character.
-        k, v = p.split('=')
+        k, v = p.split('=', 1)
         # If the value is a digit, convert it from string to integer.
         if v.isdigit():
             v = int(v)
