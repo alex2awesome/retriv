@@ -103,6 +103,7 @@ class DenseRetriever(BaseRetriever):
             make_inverse_index: Union[None, Callable] = None,
             device: str = "cuda" if torch.cuda.is_available() else "cpu",
             no_load_encoder: bool = False,
+            encoder=None,
             transformers_cache_dir=None,
             *args,
             **kwargs
@@ -117,6 +118,7 @@ class DenseRetriever(BaseRetriever):
             use_ann (bool, optional): whether to use approximate nearest neighbors search. Set it to `False` to use nearest neighbors search without approximation. If you have less than 20k documents in your collection, you probably want to disable approximation. Defaults to True.
             make_inverse_index: a callable that takes a dictionary and returns its inverse. Defaults to None.
             no_load_encoder: load the index without loading the encoder (we must then pass in embeddings to `query` functions.
+            encoder: an existing Encoder instance to reuse. If provided, skips creating a new Encoder.
         """
         self.index_name = index_name
         self.model = model
@@ -124,7 +126,12 @@ class DenseRetriever(BaseRetriever):
         self.use_ann = use_ann
         self.device = device
 
-        if no_load_encoder:
+        if encoder is not None:
+            self.encoder = encoder
+            # Keep the encoder's index_name in sync so encode_collection
+            # saves embeddings to the correct directory.
+            self.encoder.index_name = index_name
+        elif no_load_encoder:
             self.encoder = None
         else:
             self.encoder = Encoder(
@@ -177,6 +184,7 @@ class DenseRetriever(BaseRetriever):
             index_name: str = "new-index",
             make_inverse_index: Union[None, Callable] = None,
             skip_encoder_loading: bool = False,
+            encoder=None,
             transformers_cache_dir: str = None,
             *args,
             **kwargs
@@ -188,6 +196,7 @@ class DenseRetriever(BaseRetriever):
             make_inverse_index (Union[None, Callable], optional): Function to generate an inverse index.
             skip_encoder_loading (bool, optional): Whether or not to load the encoder
                 (if we don't, we need to pass in embeddings instead of a query.)
+            encoder: an existing Encoder instance to reuse. If provided, skips creating a new Encoder.
             *args: Variable length argument list.
             **kwargs: Arbitrary keyword arguments.
 
@@ -198,6 +207,7 @@ class DenseRetriever(BaseRetriever):
         dr = DenseRetriever(
             **state["init_args"],
             no_load_encoder=skip_encoder_loading,
+            encoder=encoder,
             transformers_cache_dir=transformers_cache_dir,
         )
         dr.initialize_doc_index()
