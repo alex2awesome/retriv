@@ -394,11 +394,10 @@ class DenseRetriever(BaseRetriever):
             raise NotImplementedError('use ANN....')
 
         doc_ids = self.map_internal_ids_to_original_ids(doc_ids)
-        return (
-            self.prepare_results(doc_ids, scores)
-            if return_docs
-            else dict(zip(doc_ids, scores))
-        )
+        if return_docs:
+            return self.prepare_results(doc_ids, scores)
+        else:
+            return [{"id": doc_id, "score": float(s)} for doc_id, s in zip(doc_ids, scores)]
 
     def msearch(
         self,
@@ -436,7 +435,10 @@ class DenseRetriever(BaseRetriever):
             self.map_internal_ids_to_original_ids(_doc_ids) for _doc_ids in doc_ids
         ]
 
-        results = {q: dict(zip(doc_ids[i], scores[i])) for i, q in enumerate(q_ids)}
+        results = {
+            q: [{"id": did, "score": float(s)} for did, s in zip(doc_ids[i], scores[i])]
+            for i, q in enumerate(q_ids)
+        }
 
         return {q_id: results[q_id] for q_id in q_ids}
 

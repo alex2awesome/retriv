@@ -344,7 +344,7 @@ class SparseRetriever(BaseRetriever):
         unique_doc_ids = self.map_internal_ids_to_original_ids(unique_doc_ids)
 
         if not return_docs:
-            return dict(zip(unique_doc_ids, scores))
+            return [{"id": doc_id, "score": float(s)} for doc_id, s in zip(unique_doc_ids, scores)]
 
         return self.prepare_results(unique_doc_ids, scores)
 
