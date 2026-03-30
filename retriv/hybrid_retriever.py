@@ -196,6 +196,145 @@ class HybridRetriever(BaseRetriever):
             show_progress,
         )
 
+    def add(
+        self,
+        collection: Iterable,
+        callback: callable = None,
+        show_progress: bool = True,
+        batch_size: int = 512,
+    ):
+        """Add new documents to an existing hybrid index incrementally.
+
+        Updates both sparse and dense components without rebuilding.
+
+        Args:
+            collection: Iterable of dicts with "id" and "text" keys.
+            callback: Optional transform applied to each doc before indexing.
+            show_progress: Whether to show progress bars.
+            batch_size: Encoding batch size for dense retriever.
+
+        Returns:
+            HybridRetriever: self
+        """
+        if self.id_mapping is None:
+            raise RuntimeError("No existing index found. Use index() first.")
+
+        # Collect new documents
+        new_docs = []
+        for doc in collection:
+            x = callback(doc) if callback is not None else doc
+            new_docs.append(x)
+        if not new_docs:
+            return self
+
+        # Filter out documents already in the index
+        existing_ids = set(self.id_mapping.values())
+        new_docs = [d for d in new_docs if d["id"] not in existing_ids]
+        if not new_docs:
+            return self
+
+        old_count = self.doc_count
+
+        # 1. Append to shared docs.jsonl
+        self.append_to_collection(new_docs)
+
+        # 2. Re-initialize shared doc index
+        self.initialize_doc_index()
+
+        # 3. Extend shared id_mapping
+        for i, doc in enumerate(new_docs):
+            self.id_mapping[old_count + i] = doc["id"]
+        self.doc_count = old_count + len(new_docs)
+
+        # 4. Sync shared state to sub-retrievers before calling their add
+        self.sparse_retriever.doc_index = self.doc_index
+        self.sparse_retriever.id_mapping = self.id_mapping
+        self.sparse_retriever.doc_count = self.doc_count
+
+        self.dense_retriever.doc_index = self.doc_index
+        self.dense_retriever.id_mapping = self.id_mapping
+        self.dense_retriever.doc_count = self.doc_count
+
+        # 5. Update sparse index incrementally (skip doc append — already done)
+        new_texts = [doc["text"] for doc in new_docs]
+        preprocessed = list(
+            self.sparse_retriever.preprocessing_pipe(iter(new_texts), generator=True)
+        )
+        for i, tokens in enumerate(preprocessed):
+            internal_id = np.int32(old_count + i)
+            tf_counts = {}
+            for token in tokens:
+                tf_counts[token] = tf_counts.get(token, 0) + 1
+            doc_len = np.float32(sum(tf_counts.values()))
+            self.sparse_retriever.doc_lens = np.append(
+                self.sparse_retriever.doc_lens, doc_len
+            )
+            for term, freq in tf_counts.items():
+                ii = self.sparse_retriever.inverted_index
+                if term in ii:
+                    ii[term]["doc_ids"] = np.append(
+                        ii[term]["doc_ids"], internal_id
+                    )
+                    ii[term]["tfs"] = np.append(
+                        ii[term]["tfs"], np.int16(freq)
+                    )
+                else:
+                    ii[term] = {
+                        "doc_ids": np.array([internal_id], dtype=np.int32),
+                        "tfs": np.array([np.int16(freq)], dtype=np.int16),
+                    }
+        self.sparse_retriever.avg_doc_len = np.mean(
+            self.sparse_retriever.doc_lens, dtype=np.float32
+        )
+        self.sparse_retriever.relative_doc_lens = (
+            self.sparse_retriever.doc_lens / self.sparse_retriever.avg_doc_len
+        )
+        self.sparse_retriever.vocabulary = set(self.sparse_retriever.inverted_index)
+        self.sparse_retriever.id_mapping_reverse = (
+            self.sparse_retriever.make_inverse_index(self.sparse_retriever.id_mapping)
+        )
+
+        # 6. Update dense index incrementally (skip doc append — already done)
+        if self.dense_retriever.encoder is not None:
+            import faiss as _faiss
+            from .paths import faiss_index_path, embeddings_folder_path
+
+            use_gpu = self.dense_retriever.device == "cuda"
+            if use_gpu:
+                self.dense_retriever.encoder.change_device("cuda")
+            new_embeddings = self.dense_retriever.encoder.bencode(
+                new_texts, batch_size=batch_size, show_progress=show_progress
+            )
+            if use_gpu:
+                self.dense_retriever.encoder.change_device("cpu")
+            new_embeddings = np.asarray(new_embeddings, dtype=np.float32)
+
+            emb_folder = embeddings_folder_path(self.index_name)
+            existing_chunks = sorted(emb_folder.glob("chunk_*.npy"))
+            np.save(emb_folder / f"chunk_{len(existing_chunks)}.npy", new_embeddings)
+
+            if (
+                self.dense_retriever.use_ann
+                and self.dense_retriever.ann_searcher.faiss_index is not None
+            ):
+                self.dense_retriever.ann_searcher.faiss_index.add(new_embeddings)
+                _faiss.write_index(
+                    self.dense_retriever.ann_searcher.faiss_index,
+                    str(faiss_index_path(self.index_name)),
+                )
+            elif self.dense_retriever.embeddings is not None:
+                self.dense_retriever.embeddings = np.concatenate(
+                    [self.dense_retriever.embeddings, new_embeddings]
+                )
+
+        self.dense_retriever.id_mapping_reverse = (
+            self.dense_retriever.make_inverse_index(self.dense_retriever.id_mapping)
+        )
+
+        # 7. Save all
+        self.save()
+        return self
+
     def save(self):
         """Save the state of the retriever to be able to restore it later."""
 

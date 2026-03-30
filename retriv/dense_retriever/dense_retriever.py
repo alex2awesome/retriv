@@ -12,7 +12,7 @@ from oneliner_utils import create_path
 from tqdm import tqdm
 
 from ..base_retriever import BaseRetriever
-from ..paths import docs_path, dr_state_path, embeddings_folder_path
+from ..paths import docs_path, dr_state_path, embeddings_folder_path, faiss_index_path
 from .ann_searcher import ANN_Searcher
 from .encoder import Encoder
 from urllib.parse import urlparse, urljoin
@@ -303,6 +303,97 @@ class DenseRetriever(BaseRetriever):
             show_progress=show_progress,
         )
         self.id_mapping_reverse = self.make_inverse_index(self.id_mapping)
+        self.save()
+        return self
+
+    def add(
+        self,
+        collection: Iterable,
+        callback: callable = None,
+        show_progress: bool = True,
+        batch_size: int = 512,
+    ):
+        """Add new documents to an existing index incrementally.
+
+        Appends documents to the collection, encodes only the new documents,
+        and updates the FAISS index without rebuilding from scratch.
+
+        Args:
+            collection: Iterable of dicts with "id" and "text" keys.
+            callback: Optional transform applied to each doc before indexing.
+            show_progress: Whether to show progress bars.
+            batch_size: Encoding batch size.
+
+        Returns:
+            DenseRetriever: self
+        """
+        if self.id_mapping is None:
+            raise RuntimeError("No existing index found. Use index() first.")
+
+        # Collect new documents into a list so we can iterate twice
+        new_docs = []
+        for doc in collection:
+            x = callback(doc) if callback is not None else doc
+            new_docs.append(x)
+        if not new_docs:
+            return self
+
+        # Filter out documents already in the index
+        existing_ids = set(self.id_mapping.values())
+        new_docs = [d for d in new_docs if d["id"] not in existing_ids]
+        if not new_docs:
+            return self
+
+        old_count = self.doc_count
+
+        # 1. Append to docs.jsonl
+        self.append_to_collection(new_docs)
+
+        # 2. Re-initialize doc index for lookups
+        self.initialize_doc_index()
+
+        # 3. Extend id_mapping
+        for i, doc in enumerate(new_docs):
+            self.id_mapping[old_count + i] = doc["id"]
+        self.doc_count = old_count + len(new_docs)
+
+        # 4. Encode only new documents
+        new_texts = [doc["text"] for doc in new_docs]
+        if self.encoder is not None:
+            use_gpu = self.device == "cuda"
+            if use_gpu:
+                self.encoder.change_device("cuda")
+            new_embeddings = self.encoder.bencode(
+                new_texts, batch_size=batch_size, show_progress=show_progress
+            )
+            if use_gpu:
+                self.encoder.change_device("cpu")
+        else:
+            raise RuntimeError("Encoder required for add(). Load with skip_encoder_loading=False.")
+
+        new_embeddings = np.asarray(new_embeddings, dtype=np.float32)
+
+        # 5. Save new embeddings as an additional chunk
+        emb_folder = embeddings_folder_path(self.index_name)
+        existing_chunks = sorted(emb_folder.glob("chunk_*.npy"))
+        next_chunk_num = len(existing_chunks)
+        np.save(emb_folder / f"chunk_{next_chunk_num}.npy", new_embeddings)
+
+        # 6. Update FAISS index or in-memory embeddings
+        if self.use_ann and self.ann_searcher.faiss_index is not None:
+            self.ann_searcher.faiss_index.add(new_embeddings)
+            # Persist the updated FAISS index
+            faiss.write_index(
+                self.ann_searcher.faiss_index,
+                str(faiss_index_path(self.index_name)),
+            )
+        elif self.embeddings is not None:
+            self.embeddings = np.concatenate([self.embeddings, new_embeddings])
+
+        # 7. Update reverse mapping
+        self.id_mapping_reverse = self.make_inverse_index(self.id_mapping)
+
+        # 8. Save state
         self.save()
         return self
 

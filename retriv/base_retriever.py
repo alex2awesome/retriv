@@ -50,6 +50,13 @@ class BaseRetriever:
                 x = callback(doc) if callback is not None else doc
                 f.write(orjson.dumps(x) + "\n".encode())
 
+    def append_to_collection(self, collection: Iterable, callback: callable = None):
+        """Append new documents to an existing docs.jsonl file."""
+        with open(docs_path(self.index_name), "ab") as f:
+            for doc in collection:
+                x = callback(doc) if callback is not None else doc
+                f.write(orjson.dumps(x) + "\n".encode())
+
     def initialize_doc_index(self):
         self.doc_index = Indxr(docs_path(self.index_name))
 

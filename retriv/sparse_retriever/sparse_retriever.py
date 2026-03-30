@@ -247,6 +247,98 @@ class SparseRetriever(BaseRetriever):
         self.save()
         return self
 
+    def add(
+        self,
+        collection: Iterable,
+        callback: callable = None,
+        show_progress: bool = True,
+    ):
+        """Add new documents to an existing index incrementally.
+
+        Updates the inverted index, document lengths, and BM25 statistics
+        without rebuilding from scratch.
+
+        Args:
+            collection: Iterable of dicts with "id" and "text" keys.
+            callback: Optional transform applied to each doc before indexing.
+            show_progress: Whether to show progress bars.
+
+        Returns:
+            SparseRetriever: self
+        """
+        if self.id_mapping is None:
+            raise RuntimeError("No existing index found. Use index() first.")
+
+        # Collect new documents
+        new_docs = []
+        for doc in collection:
+            x = callback(doc) if callback is not None else doc
+            new_docs.append(x)
+        if not new_docs:
+            return self
+
+        # Filter out documents already in the index
+        existing_ids = set(self.id_mapping.values())
+        new_docs = [d for d in new_docs if d["id"] not in existing_ids]
+        if not new_docs:
+            return self
+
+        old_count = self.doc_count
+
+        # 1. Append to docs.jsonl
+        self.append_to_collection(new_docs)
+
+        # 2. Re-initialize doc index for lookups
+        self.initialize_doc_index()
+
+        # 3. Extend id_mapping
+        for i, doc in enumerate(new_docs):
+            self.id_mapping[old_count + i] = doc["id"]
+        self.doc_count = old_count + len(new_docs)
+
+        # 4. Preprocess new documents
+        new_texts = [doc["text"] for doc in new_docs]
+        preprocessed = list(self.preprocessing_pipe(iter(new_texts), generator=True))
+
+        # 5. Update inverted index incrementally
+        for i, tokens in enumerate(preprocessed):
+            internal_id = np.int32(old_count + i)
+            # Count term frequencies for this document
+            tf_counts = {}
+            for token in tokens:
+                tf_counts[token] = tf_counts.get(token, 0) + 1
+
+            doc_len = np.float32(sum(tf_counts.values()))
+
+            # Append to doc_lens
+            self.doc_lens = np.append(self.doc_lens, doc_len)
+
+            # Update inverted index
+            for term, freq in tf_counts.items():
+                if term in self.inverted_index:
+                    entry = self.inverted_index[term]
+                    entry["doc_ids"] = np.append(entry["doc_ids"], internal_id)
+                    entry["tfs"] = np.append(entry["tfs"], np.int16(freq))
+                else:
+                    self.inverted_index[term] = {
+                        "doc_ids": np.array([internal_id], dtype=np.int32),
+                        "tfs": np.array([np.int16(freq)], dtype=np.int16),
+                    }
+
+        # 6. Recompute relative_doc_lens (avg changes affect all docs)
+        self.avg_doc_len = np.mean(self.doc_lens, dtype=np.float32)
+        self.relative_doc_lens = self.doc_lens / self.avg_doc_len
+
+        # 7. Update vocabulary
+        self.vocabulary = set(self.inverted_index)
+
+        # 8. Update reverse mapping
+        self.id_mapping_reverse = self.make_inverse_index(self.id_mapping)
+
+        # 9. Save state
+        self.save()
+        return self
+
     def index_file(
         self, path: str, callback: callable = None, show_progress: bool = True
     ):
